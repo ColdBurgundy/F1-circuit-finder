@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>F1 시가지 서킷 찾기</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css"/>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div id="map"></div>
+    
+    <div class="controls">
+        <h2>F1 시가지 서킷 찾기</h2>
+        <p>지도에서 서킷을 찾을 영역을 설정한 후 아래 버튼을 클릭하세요.</p>
+        <button id="check-stats-button">노드/간선 확인</button>
+        <button id="find-button" class="hidden">서킷 찾기</button>
+        <button id="reset-button" class="hidden">다시하기</button>
+    </div>
+
+    <div id="map-stats" class="stats-panel">
+        <p>노드: <span id="node-count">0</span></p>
+        <p>간선: <span id="edge-count">0</span></p>
+    </div>
+    
+    <div id="results-panel" class="hidden">
+        <h3>추천 서킷</h3>
+        <ul id="circuit-list"></ul>
+    </div>
+    
+    <div id="loading-spinner" class="hidden">
+        <div class="spinner"></div>
+        <p id="loading-message">서킷을 찾는 중...</p>
+        <p id="progress-bar-container">진행률: <span id="progress-percentage">0</span>%</p>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+</body>
+</html>
