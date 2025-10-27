@@ -89,36 +89,48 @@ findButton.addEventListener('click', async () => {
     
     // Start the circuit finding process on the backend
     try {
-        await fetch('/api/find-circuits', {
+        const findResponse = await fetch('/api/find-circuits', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({ bbox: getBbox() })
         });
+
+        const findData = await findResponse.json();
+
+        if (findData.error) {
+            throw new Error(findData.error);
+        }
+
+        if (!findData.task_id) {
+            throw new Error("서버로부터 작업 ID를 받지 못했습니다.");
+        }
         
         // Poll the backend for progress every second
+        const taskId = findData.task_id;
         progressInterval = setInterval(async () => {
-            const response = await fetch('/api/progress');
-            const data = await response.json();
+            try {
+                const progressResponse = await fetch(`/api/progress/${taskId}`);
+                const progressData = await progressResponse.json();
 
-            loadingMessage.textContent = data.message;
-            progressPercentage.textContent = data.progress;
+                loadingMessage.textContent = progressData.message;
+                progressPercentage.textContent = progressData.progress;
 
-            if (data.progress === 100) {
-                clearInterval(progressInterval);
-                hideLoading();
-                findButton.disabled = false;
-                
-                if (data.circuits) {
-                    displayCircuits(data.circuits);
-                    resultsPanel.classList.remove('hidden');
-                } else {
-                    alert(data.message);
+                if (progressData.progress >= 100 || progressData.progress < 0) {
+                    clearInterval(progressInterval);
+                    hideLoading();
+                    findButton.disabled = false;
+                    
+                    if (progressData.circuits && progressData.circuits.length > 0) {
+                        displayCircuits(progressData.circuits);
+                        resultsPanel.classList.remove('hidden');
+                    } else {
+                        alert(progressData.message || "조건에 맞는 서킷을 찾지 못했습니다.");
+                    }
                 }
-            } else if (data.progress === -1) {
-                clearInterval(progressInterval);
-                alert(data.message);
-                hideLoading();
-                findButton.disabled = false;
+            } catch (pollError) {
+                console.error('Polling error:', pollError);
+                clearInterval(progressInterval); // Stop polling on error
+                alert("진행 상태를 가져오는 중 오류가 발생했습니다.");
             }
         }, 1000);
     } catch (error) {
