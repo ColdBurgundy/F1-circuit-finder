@@ -32,17 +32,14 @@ def get_or_create_filtered_graph(bbox, progress_callback=None, check_grade=False
     hash_prefix = f"graph_{hashlib.md5(bbox_str.encode()).hexdigest()}"
     
     # 해시 접두사로 시작하는 기존 캐시 파일 검색
-    try:
-        existing_files = [f for f in os.listdir(CACHE_DIR) if f.startswith(hash_prefix) and f.endswith('.graphml')]
-        if existing_files:
-            filepath = os.path.join(CACHE_DIR, existing_files[0])
-            if progress_callback: progress_callback(40, "캐시된 도로망 데이터 로드 중...")
-            G_loaded = ox.load_graphml(filepath)
-            nodes, edges = ox.graph_to_gdfs(G_loaded)
-            G = ox.graph_from_gdfs(nodes, edges, graph_attrs=G_loaded.graph)
-            return G
-    except FileNotFoundError:
-        pass # 캐시 디렉토리가 아직 없으면 그냥 진행
+    existing_files = [f for f in os.listdir(CACHE_DIR) if f.startswith(hash_prefix) and f.endswith('.graphml')]
+    if existing_files:
+        filepath = os.path.join(CACHE_DIR, existing_files[0])
+        if progress_callback: progress_callback(40, "캐시된 도로망 데이터 로드 중...")
+        G_loaded = ox.load_graphml(filepath)
+        nodes, edges = ox.graph_to_gdfs(G_loaded)
+        G = ox.graph_from_gdfs(nodes, edges, graph_attrs=G_loaded.graph)
+        return G
 
     # 캐시 파일이 없으면 새로 생성
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
