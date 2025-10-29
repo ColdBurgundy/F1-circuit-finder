@@ -1,6 +1,10 @@
-# 캐시 폴더
+# 테스트, 캐시 폴더
 graph_cache/
 cache/
+test/
+
+# 시각화 결과물 폴더
+visualizations/
 
 # Python 관련
 __pycache__/

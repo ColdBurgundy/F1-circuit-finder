@@ -1,194 +1,195 @@
-// Initialize the Leaflet map
+// --- 지도 초기화 ---
 const map = L.map('map').setView([37.5665, 126.9780], 13);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '© OpenStreetMap contributors'
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
 }).addTo(map);
 
-// Get UI elements
-const findButton = document.getElementById('find-button');
-const checkStatsButton = document.getElementById('check-stats-button');
-const resetButton = document.getElementById('reset-button');
-const resultsPanel = document.getElementById('results-panel');
-const circuitList = document.getElementById('circuit-list');
-const loadingSpinner = document.getElementById('loading-spinner');
+// --- UI 요소 ---
+const analyzeBtn = document.getElementById('analyze-area-btn');
+const prepareDataBtn = document.getElementById('prepare-data-btn');
+const findCircuitsBtn = document.getElementById('find-circuits-btn');
+
+const statsInfo = document.getElementById('stats-info');
 const nodeCountSpan = document.getElementById('node-count');
 const edgeCountSpan = document.getElementById('edge-count');
+
+const searchControls = document.getElementById('search-controls');
+const circuitSizeSelect = document.getElementById('circuit-size');
+
+const loadingSpinner = document.getElementById('loading-spinner');
 const loadingMessage = document.getElementById('loading-message');
-const progressPercentage = document.getElementById('progress-percentage');
+const progressBarFill = document.getElementById('progress-bar-fill');
 
-// State variables
-let currentCircuitLayers = [];
-let progressInterval = null;
+const resultsPanel = document.getElementById('results-panel');
+const circuitList = document.getElementById('circuit-list');
 
-// Helper function to get the current map's bounding box
-function getBbox() {
-    const bounds = map.getBounds();
-    return {
-        south: bounds.getSouth(),
-        west: bounds.getWest(),
-        north: bounds.getNorth(),
-        east: bounds.getEast()
-    };
-}
+let circuitLayers = [];
 
-// Helper function to show a loading state
-function showLoading(message) {
-    loadingSpinner.classList.remove('hidden');
-    loadingMessage.textContent = message;
-    progressPercentage.textContent = '0';
-}
-
-// Helper function to hide the loading state
-function hideLoading() {
-    loadingSpinner.classList.add('hidden');
-}
-
-// Event listener for the "노드/간선 확인" button
-checkStatsButton.addEventListener('click', async () => {
-    // Check if the zoom level is appropriate
-    if (map.getZoom() < 14) {
-        alert('더 자세히 확대해야 도로망을 확인할 수 있습니다.');
-        return;
-    }
-
-    showLoading('노드/간선 수를 계산 중...');
-    checkStatsButton.disabled = true;
+// --- 이벤트 핸들러 ---
+analyzeBtn.addEventListener('click', async () => {
+    resetUI();
+    setLoading(true, '지역 분석 중...');
+    
+    const bbox = getBboxFromMap();
 
     try {
         const response = await fetch('/api/graph-stats', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ bbox: getBbox() })
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ bbox })
         });
         const data = await response.json();
+        if (data.error) throw new Error(data.error);
 
-        if (data.error) {
-            alert(`오류: ${data.error}`);
-        } else {
-            nodeCountSpan.textContent = data.nodes;
-            edgeCountSpan.textContent = data.edges;
-            // Show the find button and hide the stats button
-            checkStatsButton.classList.add('hidden');
-            findButton.classList.remove('hidden');
-            resetButton.classList.remove('hidden');
-        }
+        nodeCountSpan.textContent = data.nodes;
+        edgeCountSpan.textContent = data.edges;
+        statsInfo.classList.remove('hidden');
+        prepareDataBtn.disabled = false;
     } catch (error) {
-        alert('통계 정보를 가져오는 중 오류가 발생했습니다.');
-        console.error('Error:', error);
+        alert('지역 분석 중 오류가 발생했습니다: ' + error.message);
     } finally {
-        hideLoading();
-        checkStatsButton.disabled = false;
+        setLoading(false);
     }
 });
 
-// Event listener for the "서킷 찾기" button
-findButton.addEventListener('click', async () => {
-    showLoading('서킷을 찾는 중...');
-    findButton.disabled = true;
-    checkStatsButton.disabled = true;
+prepareDataBtn.addEventListener('click', async () => {
+    prepareDataBtn.disabled = true;
+    const bbox = getBboxFromMap();
     
-    // Start the circuit finding process on the backend
     try {
-        const findResponse = await fetch('/api/find-circuits', {
+        const response = await fetch('/api/prepare-graph', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ bbox: getBbox() })
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ bbox })
         });
-
-        const findData = await findResponse.json();
-
-        if (findData.error) {
-            throw new Error(findData.error);
-        }
-
-        if (!findData.task_id) {
-            throw new Error("서버로부터 작업 ID를 받지 못했습니다.");
-        }
+        const data = await response.json();
+        if (data.error) throw new Error(data.error);
         
-        // Poll the backend for progress every second
-        const taskId = findData.task_id;
-        progressInterval = setInterval(async () => {
-            try {
-                const progressResponse = await fetch(`/api/progress/${taskId}`);
-                const progressData = await progressResponse.json();
-
-                loadingMessage.textContent = progressData.message;
-                progressPercentage.textContent = progressData.progress;
-
-                if (progressData.progress >= 100 || progressData.progress < 0) {
-                    clearInterval(progressInterval);
-                    hideLoading();
-                    findButton.disabled = false;
-                    
-                    if (progressData.circuits && progressData.circuits.length > 0) {
-                        displayCircuits(progressData.circuits);
-                        resultsPanel.classList.remove('hidden');
-                    } else {
-                        alert(progressData.message || "조건에 맞는 서킷을 찾지 못했습니다.");
-                    }
-                }
-            } catch (pollError) {
-                console.error('Polling error:', pollError);
-                clearInterval(progressInterval); // Stop polling on error
-                alert("진행 상태를 가져오는 중 오류가 발생했습니다.");
-            }
-        }, 1000);
+        pollProgress(data.task_id, 'prepare');
     } catch (error) {
-        alert('서킷을 찾는 중 오류가 발생했습니다.');
-        console.error('Error:', error);
-        hideLoading();
-        findButton.disabled = false;
-        if (progressInterval) clearInterval(progressInterval);
+        alert('데이터 준비 요청 중 오류가 발생했습니다: ' + error.message);
+        prepareDataBtn.disabled = false;
     }
 });
 
-// Event listener for the "다시하기" button
-resetButton.addEventListener('click', () => {
-    // Clear all state and UI elements
-    currentCircuitLayers.forEach(layer => map.removeLayer(layer));
-    currentCircuitLayers = [];
-    resultsPanel.classList.add('hidden');
-    circuitList.innerHTML = '';
-    
-    // Reset buttons and stats
-    checkStatsButton.classList.remove('hidden');
-    findButton.classList.add('hidden');
-    resetButton.classList.add('hidden');
-    findButton.disabled = false;
-    
-    nodeCountSpan.textContent = '0';
-    edgeCountSpan.textContent = '0';
-    
-    if (progressInterval) clearInterval(progressInterval);
+findCircuitsBtn.addEventListener('click', async () => {
+    findCircuitsBtn.disabled = true;
+    const bbox = getBboxFromMap();
+    const sizeOption = circuitSizeSelect.value.split(',');
+    const minLength = parseInt(sizeOption[0], 10);
+    const maxLength = parseInt(sizeOption[1], 10);
+
+    try {
+        const response = await fetch('/api/find-circuits', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ bbox, min_length: minLength, max_length: maxLength })
+        });
+        const data = await response.json();
+        if (data.error) throw new Error(data.error);
+
+        pollProgress(data.task_id, 'search');
+    } catch (error) {
+        alert('서킷 탐색 요청 중 오류가 발생했습니다: ' + error.message);
+        findCircuitsBtn.disabled = false;
+    }
 });
 
-// Helper function to display circuits on the map and in the list
-function displayCircuits(circuits) {
-    circuitList.innerHTML = '';
-    circuits.forEach((circuit, index) => {
-        const listItem = document.createElement('li');
-        listItem.innerHTML = `
-            <strong>서킷 ${index + 1}</strong>
-            <p>길이: ${(circuit.length / 1000).toFixed(2)} km</p>
-            <p>점수: ${circuit.score.toFixed(2)}</p>
-        `;
-        listItem.addEventListener('click', () => {
-            const coords = circuit.coordinates.map(c => [c[0], c[1]]);
-            const bounds = L.latLngBounds(coords);
-            map.fitBounds(bounds, { padding: [50, 50] });
-            highlightCircuit(circuit);
-        });
-        circuitList.appendChild(listItem);
-        const polyline = L.polyline(circuit.coordinates, { color: 'gray', weight: 5, opacity: 0.7 }).addTo(map);
-        currentCircuitLayers.push(polyline);
-    });
+// --- 헬퍼 함수 ---
+function getBboxFromMap() {
+    const bounds = map.getBounds();
+    return {
+        north: bounds.getNorth(),
+        south: bounds.getSouth(),
+        east: bounds.getEast(),
+        west: bounds.getWest()
+    };
 }
 
-// Helper function to highlight a specific circuit
-function highlightCircuit(selectedCircuit) {
-    currentCircuitLayers.forEach(layer => map.removeLayer(layer));
-    currentCircuitLayers = [];
-    const highlightPolyline = L.polyline(selectedCircuit.coordinates, { color: 'red', weight: 8, opacity: 1 }).addTo(map);
-    currentCircuitLayers.push(highlightPolyline);
-    L.marker(selectedCircuit.coordinates[0]).addTo(map).bindPopup('피트 레인');
+function setLoading(isLoading, message = '') {
+    if (isLoading) {
+        loadingSpinner.classList.remove('hidden');
+        loadingMessage.textContent = message;
+        progressBarFill.style.width = '0%';
+        progressBarFill.textContent = '0%';
+    } else {
+        loadingSpinner.classList.add('hidden');
+    }
+}
+
+function resetUI() {
+    statsInfo.classList.add('hidden');
+    prepareDataBtn.disabled = true;
+    prepareDataBtn.textContent = '지도 데이터 준비';
+    searchControls.classList.add('hidden');
+    resultsPanel.classList.add('hidden');
+    circuitList.innerHTML = '';
+    circuitLayers.forEach(layer => map.removeLayer(layer));
+    circuitLayers = [];
+}
+
+function pollProgress(taskId, pollType) {
+    setLoading(true, pollType === 'prepare' ? '데이터 준비 중...' : '서킷 탐색 중...');
+
+    const interval = setInterval(async () => {
+        try {
+            const response = await fetch(`/api/progress/${taskId}`);
+            const data = await response.json();
+
+            if (data.progress >= 0) {
+                progressBarFill.style.width = data.progress + '%';
+                progressBarFill.textContent = data.progress + '%';
+                loadingMessage.textContent = data.message;
+            }
+
+            if (data.progress >= 100 || data.progress < 0) {
+                clearInterval(interval);
+                setLoading(false);
+
+                if (data.progress < 0) {
+                    alert('오류가 발생했습니다: ' + data.message);
+                    return;
+                }
+
+                if (pollType === 'prepare') {
+                    prepareDataBtn.textContent = '지도 데이터 준비 완료';
+                    searchControls.classList.remove('hidden');
+                } else if (pollType === 'search') {
+                    // [수정] data.circuits가 존재하지 않거나(서킷 못찾음) 빈 배열일 때도 displayResults를 호출하도록 변경
+                    displayResults(data.circuits);
+                    findCircuitsBtn.disabled = false;
+                }
+            }
+        } catch (error) {
+            clearInterval(interval);
+            setLoading(false);
+            alert('진행 상태를 가져오는 중 오류가 발생했습니다.');
+        }
+    }, 1000);
+}
+
+function displayResults(circuits) {
+    if (circuits.length === 0) {
+        alert('조건에 맞는 서킷을 찾을 수 없습니다.');
+        return;
+    }
+
+    resultsPanel.classList.remove('hidden');
+    circuits.forEach((circuit, index) => {
+        const li = document.createElement('li');
+        li.innerHTML = `
+            <h4>서킷 #${index + 1} (점수: ${circuit.score.toFixed(2)})</h4>
+            <p>총 길이: ${(circuit.length / 1000).toFixed(2)} km, 코너 수: ${circuit.corners} 개, 최장 직선: ${circuit.drs_straight.toFixed(2)} m</p>
+        `;
+        li.addEventListener('mouseover', () => {
+            circuitLayers[index].setStyle({ color: 'blue', weight: 7 });
+        });
+        li.addEventListener('mouseout', () => {
+            circuitLayers[index].setStyle({ color: 'red', weight: 5 });
+        });
+        circuitList.appendChild(li);
+
+        const polyline = L.polyline(circuit.coordinates, { color: 'gray', weight: 5, opacity: 0.7 }).addTo(map);
+        circuitLayers.push(polyline);
+    });
 }

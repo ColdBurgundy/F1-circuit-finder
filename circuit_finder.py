@@ -35,7 +35,7 @@ def get_or_create_filtered_graph(bbox, progress_callback=None, check_grade=False
     existing_files = [f for f in os.listdir(CACHE_DIR) if f.startswith(hash_prefix) and f.endswith('.graphml')]
     if existing_files:
         filepath = os.path.join(CACHE_DIR, existing_files[0])
-        if progress_callback: progress_callback(40, "캐시된 도로망 데이터 로드 중...")
+        if progress_callback: progress_callback(100, "캐시된 도로망 데이터 로드 완료")
         G_loaded = ox.load_graphml(filepath)
         nodes, edges = ox.graph_to_gdfs(G_loaded)
         G = ox.graph_from_gdfs(nodes, edges, graph_attrs=G_loaded.graph)
@@ -57,13 +57,15 @@ def get_or_create_filtered_graph(bbox, progress_callback=None, check_grade=False
     east = bbox['east']
     
     if progress_callback: progress_callback(10, "도로망 데이터 불러오는 중...")
-    G = ox.graph_from_bbox((west, south, east, north), network_type='all', simplify=True)
+    # [수정] 다운로드 시점의 자동 단순화를 비활성화합니다. (simplify=False)
+    # 모든 필터링이 끝난 후, 마지막에 수동으로 한 번만 단순화를 진행합니다.
+    G = ox.graph_from_bbox((west, south, east, north), network_type='all', simplify=False)
     
-    if progress_callback: progress_callback(30, "고도 데이터 추가 중...")
+    if progress_callback: progress_callback(25, "고도 데이터 추가 중...")
     G = ox.elevation.add_node_elevations_google(G, api_key=GOOGLE_MAPS_API_KEY)
     G = ox.elevation.add_edge_grades(G)
 
-    if progress_callback: progress_callback(40, "도로망 필터링 및 캐시 저장 중...")
+    if progress_callback: progress_callback(50, "도로망 필터링 중...")
     
     # 조건에 맞는 간선만 필터링
     valid_edges = []
@@ -84,25 +86,68 @@ def get_or_create_filtered_graph(bbox, progress_callback=None, check_grade=False
             try: width = float(width[0])
             except (ValueError, IndexError): width = 0
         
-        is_wide_enough = (lanes and int(lanes) >= 4) or (width and float(width) >= 10)
+        # [실험] 필터링 조건을 완화하여 왕복 2차선 도로도 포함 (기존: 4차선)
+        has_enough_lanes = (lanes and int(lanes) >= 2)
+
+        # 'lanes' 정보가 없을 경우, 도로 종류(highway 태그)로 너비를 추정
+        road_type = data.get('highway')
+        is_major_road = road_type in ['primary', 'trunk', 'motorway']
+
+        is_wide_enough = has_enough_lanes or is_major_road
+
         if not is_wide_enough: continue
         
         valid_edges.append((u, v, key))
 
     # 유효한 간선과 그에 연결된 노드로 새로운 그래프 생성
     G_filtered = G.edge_subgraph(valid_edges).copy()
-
-    ox.save_graphml(G_filtered, filepath=filepath)
     
-    return G_filtered
+    # [추가] 무의미한 교차로(차수가 2인 노드)를 정리하여 그래프를 단순화합니다.
+    # 이렇게 하면 하나의 도로 위에 있던 여러 개의 점들이 사라지고, 경로 탐색 효율이 향상됩니다.
+    if progress_callback: progress_callback(75, "그래프 단순화 중...")
+    G_simplified = ox.simplify_graph(G_filtered)
 
-def find_circuits_in_area(bbox, progress_callback=None, check_curvature=False, check_grade=False):
+    # [최종 수정] 그래프를 저장하기 전에, 단순화 과정에서 리스트가 된 속성들을 정리합니다.
+    # 리스트 형태의 속성(예: grade, length)을 평균값(단일 float)으로 변환하여,
+    # 나중에 그래프를 불러올 때 발생하는 'could not convert string to float' 오류를 원천적으로 방지합니다.
+    for u, v, data in G_simplified.edges(data=True):
+        for attr, value in list(data.items()):
+            if isinstance(value, list):
+                # [최종 해결] 속성 타입에 따라 올바르게 처리하도록 로직을 개선합니다.
+                # 이로써 'Invalid literal for boolean' 오류를 원천적으로 방지합니다.
+                try:
+                    if attr == 'osmid':
+                        # osmid는 ID이므로, 첫 번째 값을 정수로 사용합니다.
+                        data[attr] = int(value[0])
+                    elif attr in ['oneway', 'tunnel', 'bridge', 'reversed']:
+                        # oneway, tunnel, bridge, reversed 등은 불리언(Boolean) 속성입니다.
+                        # 리스트에 True가 하나라도 포함되어 있으면, 병합된 도로 전체를 True로 설정합니다.
+                        data[attr] = any(value)
+                    else:
+                        # 다른 숫자 속성들은 평균값을 계산합니다.
+                        numeric_values = [float(x) for x in value if isinstance(x, (int, float, bool))]
+                        if numeric_values:
+                            data[attr] = sum(numeric_values) / len(numeric_values)
+                        else:
+                            # 유효한 숫자 값이 없으면 속성을 제거합니다.
+                            del data[attr]
+                except (ValueError, TypeError, IndexError):
+                    # 어떤 이유로든 처리 실패 시, 잘못된 데이터가 저장되지 않도록 속성을 제거합니다.
+                    if attr in data:
+                        del data[attr]
+
+    if progress_callback: progress_callback(90, "데이터 캐시 파일 저장 중...")
+    ox.save_graphml(G_simplified, filepath=filepath)
+    
+    return G_simplified
+
+def find_circuits_in_area(bbox, min_length_meters=3200, max_length_meters=7000, progress_callback=None, check_curvature=False, check_grade=False):
     """경계 내에서 서킷을 찾아 점수를 매깁니다."""
     G = get_or_create_filtered_graph(bbox, progress_callback, check_grade=check_grade)
 
     circuits = []
-    min_length_meters = 3200  # 최소 트랙 길이 3.2km
-    max_length_meters = 7000  # 최대 트랙 길이 7km
+    # min_length_meters = 3200  # 최소 트랙 길이 3.2km -> 인자로 받도록 변경
+    # max_length_meters = 7000  # 최대 트랙 길이 7km -> 인자로 받도록 변경
 
     if progress_callback:
         progress_callback(50, "서킷 후보를 탐색 중...")
@@ -113,7 +158,7 @@ def find_circuits_in_area(bbox, progress_callback=None, check_curvature=False, c
     start_nodes = random.sample(nodes, min(len(nodes), 200)) # 샘플링하여 시작
     
     # DFS를 통해 길이 조건에 맞는 기본 후보군 탐색
-    candidate_cycles = find_cycles_with_dfs(G, start_nodes, min_length_meters, max_length_meters)
+    candidate_cycles = find_cycles_with_dfs(G, start_nodes, min_length_meters, max_length_meters, progress_callback)
 
     # 상세 필터링 적용
     for path in candidate_cycles:
@@ -121,7 +166,7 @@ def find_circuits_in_area(bbox, progress_callback=None, check_curvature=False, c
             circuits.append(path)
     
     if progress_callback:
-        progress_callback(70, f"총 {len(circuits)}개의 후보 서킷 평가 중...")
+        progress_callback(90, f"총 {len(circuits)}개의 후보 서킷 평가 중...")
 
     # 서킷 평가 및 점수화
     scored_circuits = []
@@ -200,14 +245,21 @@ def is_path_valid(G, path, check_curvature=False):
 
     return True
 
-def find_cycles_with_dfs(G, start_nodes, min_len, max_len):
+def find_cycles_with_dfs(G, start_nodes, min_len, max_len, progress_callback=None):
     """
     조기 필터링이 적용된 DFS를 사용하여 지정된 길이 범위 내의 사이클을 찾습니다.
+    탐색 진행률을 실시간으로 업데이트합니다.
     """
     cycles = []
     found_cycles_sorted = set() # 중복 경로 확인용
+    total_nodes = len(start_nodes)
 
-    for start_node in start_nodes:
+    for i, start_node in enumerate(start_nodes):
+        if progress_callback:
+            # 탐색 단계는 50% ~ 90% 사이의 진행률을 차지하도록 설정
+            progress = 50 + int((i / total_nodes) * 40)
+            progress_callback(progress, f"탐색 진행 중... ({i+1}/{total_nodes})")
+
         stack = [(start_node, [start_node], 0)]
         
         while stack:
