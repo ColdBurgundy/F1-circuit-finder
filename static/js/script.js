@@ -9,11 +9,8 @@ const analyzeBtn = document.getElementById('analyze-area-btn');
 const prepareDataBtn = document.getElementById('prepare-data-btn');
 const findCircuitsBtn = document.getElementById('find-circuits-btn');
 
-const statsInfo = document.getElementById('stats-info');
 const nodeCountSpan = document.getElementById('node-count');
 const edgeCountSpan = document.getElementById('edge-count');
-
-const searchControls = document.getElementById('search-controls');
 const circuitSizeSelect = document.getElementById('circuit-size');
 
 const loadingSpinner = document.getElementById('loading-spinner');
@@ -23,6 +20,9 @@ const progressBarFill = document.getElementById('progress-bar-fill');
 const resultsPanel = document.getElementById('results-panel');
 const circuitList = document.getElementById('circuit-list');
 
+const step1 = document.getElementById('step-1');
+const step2 = document.getElementById('step-2');
+const step3 = document.getElementById('step-3');
 let circuitLayers = [];
 
 // --- 이벤트 핸들러 ---
@@ -43,8 +43,7 @@ analyzeBtn.addEventListener('click', async () => {
 
         nodeCountSpan.textContent = data.nodes;
         edgeCountSpan.textContent = data.edges;
-        statsInfo.classList.remove('hidden');
-        prepareDataBtn.disabled = false;
+        showStep(2); // 2단계로 전환
     } catch (error) {
         alert('지역 분석 중 오류가 발생했습니다: ' + error.message);
     } finally {
@@ -95,6 +94,14 @@ findCircuitsBtn.addEventListener('click', async () => {
     }
 });
 
+document.querySelectorAll('.back-btn').forEach(button => {
+    button.addEventListener('click', (event) => {
+        const targetStep = parseInt(event.target.getAttribute('data-target-step'), 10);
+        resetUI(targetStep);
+        showStep(targetStep);
+    });
+});
+
 // --- 헬퍼 함수 ---
 function getBboxFromMap() {
     const bounds = map.getBounds();
@@ -117,15 +124,17 @@ function setLoading(isLoading, message = '') {
     }
 }
 
-function resetUI() {
-    statsInfo.classList.add('hidden');
-    prepareDataBtn.disabled = true;
-    prepareDataBtn.textContent = '지도 데이터 준비';
-    searchControls.classList.add('hidden');
+function resetUI(toStep = 1) {
+    // UI 요소 초기화
     resultsPanel.classList.add('hidden');
     circuitList.innerHTML = '';
     circuitLayers.forEach(layer => map.removeLayer(layer));
     circuitLayers = [];
+
+    // 버튼 상태 초기화
+    prepareDataBtn.disabled = false;
+    prepareDataBtn.textContent = '지도 데이터 준비';
+    findCircuitsBtn.disabled = false;
 }
 
 function pollProgress(taskId, pollType) {
@@ -152,8 +161,7 @@ function pollProgress(taskId, pollType) {
                 }
 
                 if (pollType === 'prepare') {
-                    prepareDataBtn.textContent = '지도 데이터 준비 완료';
-                    searchControls.classList.remove('hidden');
+                    showStep(3); // 데이터 준비 완료 시 3단계로 전환
                 } else if (pollType === 'search') {
                     // [수정] data.circuits가 존재하지 않거나(서킷 못찾음) 빈 배열일 때도 displayResults를 호출하도록 변경
                     displayResults(data.circuits);
@@ -166,6 +174,18 @@ function pollProgress(taskId, pollType) {
             alert('진행 상태를 가져오는 중 오류가 발생했습니다.');
         }
     }, 1000);
+}
+
+function showStep(stepNumber) {
+    document.querySelectorAll('.step').forEach(step => {
+        step.classList.remove('active');
+    });
+
+    const nextStep = document.getElementById(`step-${stepNumber}`);
+    if (nextStep) {
+        // 애니메이션을 위해 약간의 딜레이 후 active 클래스 추가
+        setTimeout(() => nextStep.classList.add('active'), 10);
+    }
 }
 
 function displayResults(circuits) {
